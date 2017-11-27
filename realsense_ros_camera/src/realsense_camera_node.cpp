@@ -20,6 +20,7 @@
 #include <tf/transform_broadcaster.h>
 #include <tf2_ros/static_transform_broadcaster.h>
 #include <sensor_msgs/Imu.h>
+#include <realsense_ros_camera/Command.h>
 #include <realsense_ros_camera/IMUInfo.h>
 #include <csignal>
 #include <eigen3/Eigen/Geometry>
@@ -300,11 +301,26 @@ namespace realsense_ros_camera
                 throw;
             }
         }
+        void StartCamera(Command)
+        {
 
+        }
+        void StopCamera(Command)
+        {
+
+        }
+        void setupSubscribers()
+        {
+            ROS_INFO("setupSubscriber...");
+            start_subscriber_ = _node_handle.subscribe("start", 10, &RealSenseCameraNodelet::StartCamera, this);
+            stop_subscriber_ = _node_handle.subscribe("stop", 10, &RealSenseCameraNodelet::StopCamera, this);
+
+        }
         void setupPublishers()
         {
             ROS_INFO("setupPublishers...");
             image_transport::ImageTransport image_transport(getNodeHandle());
+            
 
             if (true == _enable[DEPTH])
             {
@@ -1136,6 +1152,8 @@ namespace realsense_ros_camera
         bool _pointcloud;
         rs2::asynchronous_syncer _syncer;
         rs2_extrinsics _depth2color_extrinsics;
+        ros::Subscriber start_subscriber_;
+        ros::Subscriber stop_subscriber_;
     };//end class
 
     PLUGINLIB_EXPORT_CLASS(realsense_ros_camera::RealSenseCameraNodelet, nodelet::Nodelet)

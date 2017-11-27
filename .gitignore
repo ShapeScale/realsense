@@ -1,3 +1,5 @@
 *.bin
 *.ppm
 *.bag
+.DS_Store
+.vscode
