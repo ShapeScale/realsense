@@ -20,7 +20,8 @@
 #include <tf/transform_broadcaster.h>
 #include <tf2_ros/static_transform_broadcaster.h>
 #include <sensor_msgs/Imu.h>
-#include <realsense_ros_camera/Command.h>
+#include <realsense_ros_camera/Start.h>
+#include <realsense_ros_camera/Stop.h>
 #include <realsense_ros_camera/IMUInfo.h>
 #include <csignal>
 #include <eigen3/Eigen/Geometry>
@@ -301,19 +302,82 @@ namespace realsense_ros_camera
                 throw;
             }
         }
-        void StartCamera(Command)
+        void StartCamera(Start)
         {
+                auto callback = [this] (rs2::frame frame) {frame_callback(frame);};
+                for (auto& streams : IMAGE_STREAMS)
+                {
+                    std::vector<rs2::stream_profile> profiles;
+                    for (auto& elem : streams)
+                    {
+                        if (!_enabled_profiles[elem].empty())
+                        {
+                            profiles.insert(profiles.begin(),
+                                            _enabled_profiles[elem].begin(),
+                                            _enabled_profiles[elem].end());
+                        }
+                    }
 
+                    if (!profiles.empty())
+                    {
+                        auto stream = streams.front();
+                        auto& sens = _sensors[stream];
+                        sens->open(profiles);
+
+                        if (DEPTH == stream)
+                        {
+                            auto depth_sensor = sens->as<rs2::depth_sensor>();
+                            _depth_scale_meters = depth_sensor.get_depth_scale();
+                        }
+
+                         if (_sync_frames)
+                        {
+                            sens->start(_syncer);
+                        }
+                        else
+                        {
+                            sens->start(callback);
+                        }
+                    }
+                }//end for
+
+                if (_sync_frames)
+                {
+                    
+                    _syncer.start(callback);
+                }
         }
-        void StopCamera(Command)
+        void StopCamera(Stop)
         {
+                for (auto& streams : IMAGE_STREAMS)
+                {
+                    std::vector<rs2::stream_profile> profiles;
+                    for (auto& elem : streams)
+                    {
+                        if (!_enabled_profiles[elem].empty())
+                        {
+                            profiles.insert(profiles.begin(),
+                                            _enabled_profiles[elem].begin(),
+                                            _enabled_profiles[elem].end());
+                        }
+                    }
 
+                    if (!profiles.empty())
+                    {
+                        auto stream = streams.front();
+                        auto& sens = _sensors[stream];
+                        sens->stop();
+                        
+                    }
+                }//end for
+
+              
         }
         void setupSubscribers()
         {
             ROS_INFO("setupSubscriber...");
-            start_subscriber_ = _node_handle.subscribe("start", 10, &RealSenseCameraNodelet::StartCamera, this);
-            stop_subscriber_ = _node_handle.subscribe("stop", 10, &RealSenseCameraNodelet::StopCamera, this);
+            start_subscriber_ = _node_handle.subscribe("Start", 10, &RealSenseCameraNodelet::StartCamera, this);
+            stop_subscriber_ = _node_handle.subscribe("Stop", 10, &RealSenseCameraNodelet::StopCamera, this);
 
         }
         void setupPublishers()
@@ -376,7 +440,59 @@ namespace realsense_ros_camera
                 _fe_to_imu_publisher = _node_handle.advertise<Extrinsics>("camera/extrinsics/fisheye2imu", 1, true);
             }
         }
+        void frame_callback(rs2::frame frame) 
+        {
+            // We compute a ROS timestamp which is based on an initial ROS time at point of first frame,
+            // and the incremental timestamp from the camera.
+            // In sync mode the timestamp is based on ROS time
+            if (false == _intialize_time_base)
+            {
+                _intialize_time_base = true;
+                _ros_time_base = ros::Time::now();
+                _camera_time_base = frame.get_timestamp();
+            }
 
+            ros::Time t;
+            if (_sync_frames)
+                t = ros::Time::now();
+            else
+                t = ros::Time(_ros_time_base.toSec() + (/*ms*/ frame.get_timestamp() - /*ms*/ _camera_time_base) / /*ms to seconds*/ 1000);
+
+            auto is_color_frame_arrived = false;
+            auto is_depth_frame_arrived = false;
+            if (frame.is<rs2::frameset>())
+            {
+                ROS_DEBUG("Frameset arrived");
+                auto frameset = frame.as<rs2::frameset>();
+                for (auto it = frameset.begin(); it != frameset.end(); ++it)
+                {
+                    auto f = (*it);
+                    auto stream_type = f.get_profile().stream_type();
+                    if (RS2_STREAM_COLOR == stream_type)
+                        is_color_frame_arrived = true;
+                    else if (RS2_STREAM_DEPTH == stream_type)
+                        is_depth_frame_arrived = true;
+
+                    ROS_DEBUG("Frameset contain %s frame. frame_number: %llu ; frame_TS: %f ; ros_TS(NSec): %lu",
+                              rs2_stream_to_string(stream_type), frame.get_frame_number(), frame.get_timestamp(), t.toNSec());
+                    publishFrame(f, t);
+                }
+            }
+            else
+            {
+                auto stream_type = frame.get_profile().stream_type();
+                ROS_DEBUG("%s video frame arrived. frame_number: %llu ; frame_TS: %f ; ros_TS(NSec): %lu",
+                          rs2_stream_to_string(stream_type), frame.get_frame_number(), frame.get_timestamp(), t.toNSec());
+                publishFrame(frame, t);
+            }
+
+            if (_pointcloud && is_depth_frame_arrived && is_color_frame_arrived &&
+                (0 != _pointcloud_publisher.getNumSubscribers()))
+            {
+                ROS_DEBUG("publishPCTopic(...)");
+                publishPCTopic(t);
+            }
+        } 
         void setupStreams()
         {
             ROS_INFO("setupStreams...");
@@ -429,101 +545,49 @@ namespace realsense_ros_camera
                     }
                 }
 
-                auto frame_callback = [this](rs2::frame frame)
-                {
-                    // We compute a ROS timestamp which is based on an initial ROS time at point of first frame,
-                    // and the incremental timestamp from the camera.
-                    // In sync mode the timestamp is based on ROS time
-                    if (false == _intialize_time_base)
-                    {
-                        _intialize_time_base = true;
-                        _ros_time_base = ros::Time::now();
-                        _camera_time_base = frame.get_timestamp();
-                    }
-
-                    ros::Time t;
-                    if (_sync_frames)
-                        t = ros::Time::now();
-                    else
-                        t = ros::Time(_ros_time_base.toSec()+ (/*ms*/ frame.get_timestamp() - /*ms*/ _camera_time_base) / /*ms to seconds*/ 1000);
-
-                    auto is_color_frame_arrived = false;
-                    auto is_depth_frame_arrived = false;
-                    if (frame.is<rs2::frameset>())
-                    {
-                        ROS_DEBUG("Frameset arrived");
-                        auto frameset = frame.as<rs2::frameset>();
-                        for (auto it = frameset.begin(); it != frameset.end(); ++it)
-                        {
-                            auto f = (*it);
-                            auto stream_type = f.get_profile().stream_type();
-                            if (RS2_STREAM_COLOR == stream_type)
-                                is_color_frame_arrived = true;
-                            else if (RS2_STREAM_DEPTH == stream_type)
-                                is_depth_frame_arrived = true;
-
-                            ROS_DEBUG("Frameset contain %s frame. frame_number: %llu ; frame_TS: %f ; ros_TS(NSec): %lu",
-                                      rs2_stream_to_string(stream_type), frame.get_frame_number(), frame.get_timestamp(), t.toNSec());
-                            publishFrame(f, t);
-                        }
-                    }
-                    else
-                    {
-                        auto stream_type = frame.get_profile().stream_type();
-                        ROS_DEBUG("%s video frame arrived. frame_number: %llu ; frame_TS: %f ; ros_TS(NSec): %lu",
-                                  rs2_stream_to_string(stream_type), frame.get_frame_number(), frame.get_timestamp(), t.toNSec());
-                        publishFrame(frame, t);
-                    }
-
-                    if(_pointcloud && is_depth_frame_arrived && is_color_frame_arrived &&
-                       (0 != _pointcloud_publisher.getNumSubscribers()))
-                    {
-                        ROS_DEBUG("publishPCTopic(...)");
-                        publishPCTopic(t);
-                    }
-                };
+                
 
                 // Streaming IMAGES
-                for (auto& streams : IMAGE_STREAMS)
-                {
-                    std::vector<rs2::stream_profile> profiles;
-                    for (auto& elem : streams)
-                    {
-                        if (!_enabled_profiles[elem].empty())
-                        {
-                            profiles.insert(profiles.begin(),
-                                            _enabled_profiles[elem].begin(),
-                                            _enabled_profiles[elem].end());
-                        }
-                    }
+                // for (auto& streams : IMAGE_STREAMS)
+                // {
+                //     std::vector<rs2::stream_profile> profiles;
+                //     for (auto& elem : streams)
+                //     {
+                //         if (!_enabled_profiles[elem].empty())
+                //         {
+                //             profiles.insert(profiles.begin(),
+                //                             _enabled_profiles[elem].begin(),
+                //                             _enabled_profiles[elem].end());
+                //         }
+                //     }
 
-                    if (!profiles.empty())
-                    {
-                        auto stream = streams.front();
-                        auto& sens = _sensors[stream];
-                        sens->open(profiles);
+                //     if (!profiles.empty())
+                //     {
+                //         auto stream = streams.front();
+                //         auto& sens = _sensors[stream];
+                //         sens->open(profiles);
 
-                        if (DEPTH == stream)
-                        {
-                            auto depth_sensor = sens->as<rs2::depth_sensor>();
-                            _depth_scale_meters = depth_sensor.get_depth_scale();
-                        }
+                //         if (DEPTH == stream)
+                //         {
+                //             auto depth_sensor = sens->as<rs2::depth_sensor>();
+                //             _depth_scale_meters = depth_sensor.get_depth_scale();
+                //         }
 
-                        if (_sync_frames)
-                        {
-                            sens->start(_syncer);
-                        }
-                        else
-                        {
-                            sens->start(frame_callback);
-                        }
-                    }
-                }//end for
+                //         if (_sync_frames)
+                //         {
+                //             sens->start(_syncer);
+                //         }
+                //         else
+                //         {
+                //             sens->start(frame_callback);
+                //         }
+                //     }
+                // }//end for
 
-                if (_sync_frames)
-                {
-                    _syncer.start(frame_callback);
-                }
+                // if (_sync_frames)
+                // {
+                //     _syncer.start(frame_callback);
+                // }
 
                 // Streaming HID
                 for (const auto streams : HID_STREAMS)

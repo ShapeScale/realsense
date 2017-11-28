@@ -30,7 +30,8 @@ add_message_files(
     FILES
     IMUInfo.msg
     Extrinsics.msg
-    Command.msg
+    Start.msg
+    Stop.msg
     )
 
 generate_messages(
