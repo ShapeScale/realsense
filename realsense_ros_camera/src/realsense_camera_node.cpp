@@ -1,8 +1,6 @@
 // License: Apache 2.0. See LICENSE file in root directory.
 // Copyright(c) 2017 Intel Corporation. All Rights Reserved
 
-#include <iostream>
-#include <map>
 #include <pluginlib/class_list_macros.h>
 #include <nodelet/nodelet.h>
 #include <image_transport/image_transport.h>
@@ -24,6 +22,11 @@
 #include <csignal>
 #include <eigen3/Eigen/Geometry>
 
+#include <iostream>
+#include <map>
+#include <thread>
+#include <memory>
+#include <atomic>
 
 #define REALSENSE_ROS_EMBEDDED_VERSION_STR (VAR_ARG_STRING(VERSION: REALSENSE_ROS_MAJOR_VERSION.REALSENSE_ROS_MINOR_VERSION.REALSENSE_ROS_PATCH_VERSION))
 constexpr auto realsense_ros_camera_version = REALSENSE_ROS_EMBEDDED_VERSION_STR;
@@ -133,8 +136,68 @@ namespace realsense_ros_camera
             setupStreams();
             publishStaticTransforms();
             ROS_INFO_STREAM("RealSense Node Is Up!");
+            ros::spin();
+            ROS_INFO_STREAM("RealSense onInit about to exit!");
+        }
+        void Start()
+        {
+            std::thread([this]() {
+                try
+                {
+                    if(record_to_file_)
+                    {
+                        rs2::context ctx;
+                        auto devices = ctx.query_devices();
+                        if (devices.size() > 0)
+                        {
+                            auto t = std::time(nullptr);
+                            auto tm = *std::localtime(&t);
+
+                            std::ostringstream oss;
+                            oss << std::put_time(&tm, "%d-%m-%Y %H-%M-%S");
+                            auto str = oss.str();
+                            ROS_INFO(("Saving to "+str+".bag").c_str());
+                            recorder_ = std::unique_ptr<rs2::recorder> (new rs2::recorder(str+".bag", devices[0]));                            
+                        }
+                    }
+                    auto profile = pipe_->start(*configuration_);
+                    while (running_)
+                    {
+                        rs2::frameset frame_set = pipe_->wait_for_frames();
+                        //scan_traits<rs2::frameset>::convert_to(points);
+                        if (frame_set.is<rs2::frameset>())
+                        {
+                            ROS_DEBUG("Frameset arrived");
+                            auto frameset = frame_set.as<rs2::frameset>();
+                            for (auto it = frameset.begin(); it != frameset.end(); ++it)
+                            {
+                                auto frame = (*it);
+                                auto stream_type = frame.get_profile().stream_type();
+                                ros::Time t;
+                                t = ros::Time(_ros_time_base.toSec() + (/*ms*/ frame.get_timestamp() - /*ms*/ _camera_time_base) / /*ms to seconds*/ 1000);
+                                ROS_DEBUG("Frameset contain %s frame. frame_number: %llu ; frame_TS: %f ; ros_TS(NSec): %lu",
+                                          rs2_stream_to_string(stream_type), frame.get_frame_number(), frame.get_timestamp(), t.toNSec());
+                                publishFrame(frame, t);
+                            }
+                        }
+                    }
+                }
+                catch (const std::exception &ex)
+                {
+                    ROS_ERROR_STREAM("An exception has been thrown: " << ex.what());
+                    throw;
+                }
+            })
+                .detach();
         }
 
+        void Stop()
+        {
+            if(record_to_file_)
+            {
+                recorder_.reset();
+            }
+        }
         void getParameters()
         {
             ROS_INFO("getParameters...");
@@ -194,100 +257,33 @@ namespace realsense_ros_camera
             _pnh.param("fisheye_optical_frame_id", _optical_frame_id[FISHEYE], DEFAULT_FISHEYE_OPTICAL_FRAME_ID);
             _pnh.param("gyro_optical_frame_id", _optical_frame_id[GYRO], DEFAULT_GYRO_OPTICAL_FRAME_ID);
             _pnh.param("accel_optical_frame_id", _optical_frame_id[ACCEL], DEFAULT_ACCEL_OPTICAL_FRAME_ID);
+            _pnh.param("depth_scale", depth_scale_, DEFAULT_DEPTHSCALE);
+            _pnh.param("record_to_file", record_to_file_, RECORD_TO_FILE);
+
         }
 
         void setupDevice()
         {
             ROS_INFO("setupDevice...");
             try{
-                _ctx.reset(new rs2::context());
+                configuration_ = std::unique_ptr<rs2::config>(new rs2::config());
+                pipe_ = std::unique_ptr<rs2::pipeline>(new rs2::pipeline());
+                configuration_->enable_stream(RS2_STREAM_DEPTH,  _width[DEPTH], _height[DEPTH], RS2_FORMAT_ANY, _fps[DEPTH]);
+                configuration_->enable_stream(RS2_STREAM_COLOR,  _width[COLOR], _height[COLOR], RS2_FORMAT_RGB8, _fps[COLOR]);
+                auto profile = configuration_->resolve(*pipe_);
 
-                auto list = _ctx->query_devices();
-                if (0 == list.size())
-                {
-                    _ctx.reset();
-                    ROS_ERROR("No RealSense devices were found! Terminate RealSense Node...");
-                    ros::shutdown();
-                    exit(1);
-                }
+                auto sensor = profile.get_device().first<rs2::depth_sensor>();
+                //auto sensor1 = profile.get_device().first<rs2::color_sensor>();
 
-                // Take the first device in the list.
-                // TODO: Add an ability to get the specific device to work with from outside
-                _dev = list.front();
-                _ctx->set_devices_changed_callback([this](rs2::event_information& info)
-                {
-                    if (info.was_removed(_dev))
-                    {
-                        ROS_FATAL("The device has been disconnected! Terminate RealSense Node...");
-                        ros::shutdown();
-                        exit(1);
-                    }
-                });
+                //auto sync = profile.get_device().create_syncer(); // syncronization algorithm can be device specific
+                //dev.start(sync);
 
-                auto camera_name = _dev.get_info(RS2_CAMERA_INFO_NAME);
-                ROS_INFO_STREAM("Device Name: " << camera_name);
+                //sensor.set_option(RS2_OPTION_FRAMES_QUEUE_SIZE, 31);
 
-                _serial_no = _dev.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
-                ROS_INFO_STREAM("Device Serial No: " << _serial_no);
+                sensor.set_option(RS2_OPTION_VISUAL_PRESET, RS2_RS400_VISUAL_PRESET_HIGH_ACCURACY);
 
-                auto fw_ver = _dev.get_info(RS2_CAMERA_INFO_FIRMWARE_VERSION);
-                ROS_INFO_STREAM("Device FW version: " << fw_ver);
-
-                auto pid = _dev.get_info(RS2_CAMERA_INFO_PRODUCT_ID);
-                ROS_INFO_STREAM("Device Product ID: " << pid);
-
-                ROS_INFO_STREAM("Sync Mode: " << ((_sync_frames)?"On":"Off"));
-
-                auto dev_sensors = _dev.query_sensors();
-
-                ROS_INFO_STREAM("Device Sensors: ");
-                for(auto&& elem : dev_sensors)
-                {
-                    std::string module_name = elem.get_info(RS2_CAMERA_INFO_NAME);
-                    if ("Stereo Module" == module_name || "Coded-Light Depth Sensor" == module_name)
-                    {
-                        auto sen = new rs2::sensor(elem);
-                        _sensors[DEPTH] = std::unique_ptr<rs2::sensor>(sen);
-                        _sensors[INFRA1] = std::unique_ptr<rs2::sensor>(sen);
-                        _sensors[INFRA2] = std::unique_ptr<rs2::sensor>(sen);
-                    }
-                    else if ("RGB Camera" == module_name)
-                    {
-                        _sensors[COLOR] = std::unique_ptr<rs2::sensor>(new rs2::sensor(elem));
-                    }
-                    else if ("Wide FOV Camera" == module_name)
-                    {
-                        _sensors[FISHEYE] = std::unique_ptr<rs2::sensor>(new rs2::sensor(elem));
-                    }
-                    else if ("Motion Module" == module_name)
-                    {
-                        auto hid_sensor = new rs2::sensor(elem);
-                        _sensors[GYRO] = std::unique_ptr<rs2::sensor>(hid_sensor);
-                        _sensors[ACCEL] = std::unique_ptr<rs2::sensor>(hid_sensor);
-                    }
-                    else
-                    {
-                        ROS_ERROR_STREAM("Module Name \"" << module_name << "\" isn't supported by LibRealSense! Terminate RealSense Node...");
-                        ros::shutdown();
-                        exit(1);
-                    }
-                    ROS_INFO_STREAM(std::string(elem.get_info(RS2_CAMERA_INFO_NAME)) << " was found.");
-                }
-
-                // Update "enable" map
-                std::vector<std::vector<stream_index_pair>> streams(IMAGE_STREAMS);
-                streams.insert(streams.end(), HID_STREAMS.begin(), HID_STREAMS.end());
-                for (auto& elem : streams)
-                {
-                    for (auto& stream_index : elem)
-                    {
-                        if (true == _enable[stream_index] && _sensors.find(stream_index) == _sensors.end()) // check if device supports the enabled stream
-                        {
-                            ROS_INFO_STREAM(rs2_stream_to_string(stream_index.first) << " sensor isn't supported by current device! -- Skipping...");
-                            _enable[stream_index] = false;
-                        }
-                    }
-                }
+                sensor.set_option(RS2_OPTION_DEPTH_UNITS, depth_scale_);
+                
             }
             catch(const std::exception& ex)
             {
@@ -304,7 +300,7 @@ namespace realsense_ros_camera
         void setupPublishers()
         {
             ROS_INFO("setupPublishers...");
-            image_transport::ImageTransport image_transport(getNodeHandle());
+            image_transport::ImageTransport image_transport(getMTNodeHandle());
 
             if (true == _enable[DEPTH])
             {
@@ -315,30 +311,11 @@ namespace realsense_ros_camera
                     _pointcloud_publisher = _node_handle.advertise<sensor_msgs::PointCloud2>("/camera/points", 1);
             }
 
-            if (true == _enable[INFRA1])
-            {
-                _image_publishers[INFRA1] = image_transport.advertise("camera/infra1/image_raw", 1);
-                _info_publisher[INFRA1] = _node_handle.advertise<sensor_msgs::CameraInfo>("camera/infra1/camera_info", 1);
-            }
-
-            if (true == _enable[INFRA2])
-            {
-                _image_publishers[INFRA2] = image_transport.advertise("camera/infra2/image_raw", 1);
-                _info_publisher[INFRA2] = _node_handle.advertise<sensor_msgs::CameraInfo>("camera/infra2/camera_info", 1);
-            }
-
+       
             if (true == _enable[COLOR])
             {
                 _image_publishers[COLOR] = image_transport.advertise("camera/color/image_raw", 1);
                 _info_publisher[COLOR] = _node_handle.advertise<sensor_msgs::CameraInfo>("camera/color/camera_info", 1);
-            }
-
-            if (true == _enable[FISHEYE] &&
-                true == _enable[DEPTH])
-            {
-                _image_publishers[FISHEYE] = image_transport.advertise("camera/fisheye/image_raw", 1);
-                _info_publisher[FISHEYE] = _node_handle.advertise<sensor_msgs::CameraInfo>("camera/fisheye/camera_info", 1);
-                _fe_to_depth_publisher = _node_handle.advertise<Extrinsics>("camera/extrinsics/fisheye2depth", 1, true);
             }
 
             if (true == _enable[GYRO])
@@ -353,12 +330,6 @@ namespace realsense_ros_camera
                 _info_publisher[ACCEL] = _node_handle.advertise<IMUInfo>("camera/accel/imu_info", 1, true);
             }
 
-            if (true == _enable[FISHEYE] &&
-                (true == _enable[GYRO] ||
-                 true == _enable[ACCEL]))
-            {
-                _fe_to_imu_publisher = _node_handle.advertise<Extrinsics>("camera/extrinsics/fisheye2imu", 1, true);
-            }
         }
 
         void setupStreams()
@@ -1097,6 +1068,8 @@ namespace realsense_ros_camera
         ros::NodeHandle _node_handle, _pnh;
         std::unique_ptr<rs2::context> _ctx;
         rs2::device _dev;
+        std::unique_ptr<rs2::config> configuration_;
+        std::unique_ptr<rs2::pipeline> pipe_;
 
         std::map<stream_index_pair, std::unique_ptr<rs2::sensor>> _sensors;
 
@@ -1136,6 +1109,11 @@ namespace realsense_ros_camera
         bool _pointcloud;
         rs2::asynchronous_syncer _syncer;
         rs2_extrinsics _depth2color_extrinsics;
+
+        std::atomic<bool> running_;
+        float depth_scale_;
+        std::unique_ptr<rs2::recorder> recorder_;
+        bool record_to_file_;
     };//end class
 
     PLUGINLIB_EXPORT_CLASS(realsense_ros_camera::RealSenseCameraNodelet, nodelet::Nodelet)

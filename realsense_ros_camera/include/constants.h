@@ -53,6 +53,9 @@ namespace realsense_ros_camera
     const bool ENABLE_FISHEYE = true;
     const bool ENABLE_IMU     = true;
 
+    const float DEFAULT_DEPTHSCALE = 0.0001f;
+    const bool RECORD_TO_FILE = false;
+
 
     const std::string DEFAULT_BASE_FRAME_ID            = "camera_link";
     const std::string DEFAULT_DEPTH_FRAME_ID           = "camera_depth_frame";
@@ -69,5 +72,7 @@ namespace realsense_ros_camera
     const std::string DEFAULT_ACCEL_OPTICAL_FRAME_ID   = "camera_accel_optical_frame";
     const std::string DEFAULT_GYRO_OPTICAL_FRAME_ID    = "camera_gyro_optical_frame";
     const std::string DEFAULT_IMU_OPTICAL_FRAME_ID     = "camera_imu_optical_frame";
+
+    
 }  // namespace realsense_ros_camera
 #endif  // REALSENSE_CAMERA_CONSTANTS_H
