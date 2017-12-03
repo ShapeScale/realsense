@@ -24,6 +24,7 @@
 #include <csignal>
 #include <eigen3/Eigen/Geometry>
 
+#include <chrono>
 #include <iostream>
 #include <map>
 #include <thread>
@@ -183,6 +184,7 @@ namespace realsense_ros_camera
                             }
                         }
                     }
+                    pipe_->stop();
                 }
                 catch (const std::exception &ex)
                 {
@@ -195,10 +197,14 @@ namespace realsense_ros_camera
 
         void Stop(Stop)
         {
+            running_=false;
+            using namespace std::chrono_literals;
+            std::this_thread::sleep_for(1s);
             if(record_to_file_)
             {
                 recorder_.reset();
             }
+            running_=false;
         }
         void getParameters()
         {
