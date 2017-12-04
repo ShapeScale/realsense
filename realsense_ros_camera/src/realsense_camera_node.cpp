@@ -136,8 +136,9 @@ namespace realsense_ros_camera
             getParameters();
             setupDevice();
             setupPublishers();
-            setupStreams();
-            publishStaticTransforms();
+            //setupStreams();
+            //publishStaticTransforms();
+            Start(realsense_ros_camera::Start());
             ROS_INFO_STREAM("RealSense Node Is Up!");
             ros::spin();
             ROS_INFO_STREAM("RealSense onInit about to exit!");
