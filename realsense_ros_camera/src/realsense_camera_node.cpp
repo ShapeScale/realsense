@@ -24,6 +24,9 @@
 #include <csignal>
 #include <eigen3/Eigen/Geometry>
 
+#include <boost/asio.hpp>
+
+#include <fstream>
 #include <chrono>
 #include <iostream>
 #include <map>
@@ -36,6 +39,8 @@ constexpr auto realsense_ros_camera_version = REALSENSE_ROS_EMBEDDED_VERSION_STR
 
 namespace realsense_ros_camera
 {
+    using namespace std::chrono_literals;
+    using namespace std::string_literals;
     using stream_index_pair = std::pair<rs2_stream, int>;
 
     const stream_index_pair COLOR{RS2_STREAM_COLOR, 0};
@@ -65,7 +70,9 @@ namespace realsense_ros_camera
         RealSenseCameraNodelet() :
             _serial_no(""),
             _base_frame_id(""),
-            _intialize_time_base(false)
+            _intialize_time_base(false),
+            running_(false),
+            record_to_file_(true)
         {
             ROS_INFO("RealSense ROS v%s", REALSENSE_ROS_VERSION_STR);
             ROS_INFO("Running with LibRealSense v%s", RS2_API_VERSION_STR);
@@ -136,32 +143,102 @@ namespace realsense_ros_camera
             getParameters();
             setupDevice();
             setupPublishers();
-            //setupStreams();
+            setupStreams();
             //publishStaticTransforms();
-            Start(realsense_ros_camera::Start());
             ROS_INFO_STREAM("RealSense Node Is Up!");
-            ros::spin();
+           
+			bool motion_only =false;
+            //std::thread motion( [this,&motion_only]()
+            {
+				ROS_INFO_STREAM("Open file /scans/motion.txt");
+				std::ifstream f("/scans/motion.txt");
+				
+				using boost::asio::ip::udp;
+				boost::asio::io_service io_service;
+
+				udp::socket s(io_service, udp::endpoint(udp::v4(), 0));
+				int errorCode;
+				s.set_option( boost::asio::socket_base::broadcast(true) );
+
+				udp::resolver resolver(io_service);
+				udp::endpoint endpoint = *resolver.resolve({ udp::v4(), "192.168.29.255", "8888" });
+						
+				std::string line;
+				while (std::getline(f, line))
+				{
+					ROS_INFO_STREAM(line);
+					std::istringstream iss(line);
+					std::string command;
+					iss >> command;
+					if("Start sensor"==command)
+					{
+						std::thread([this]{Start(realsense_ros_camera::Start());}).detach();
+						continue;
+					}
+					if("Stop sensor"==command)
+					{
+						Stop(realsense_ros_camera::Stop());
+						continue;
+					}
+					
+					
+					if(command == "Wait")
+					{
+						float time;
+						iss >> time;
+						std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(time*1000)));
+						continue;
+					}
+					if(command[0]=='/' && command[1]=='/'		)
+						continue;
+						
+					s.send_to(boost::asio::buffer(line), endpoint);
+					
+					
+				}
+				
+                  
+            }
+            //);
+			
+	
             ROS_INFO_STREAM("RealSense onInit about to exit!");
+            ros::shutdown();
         }
+        
+        
+        
+        
         void Start(Start)
         {
-            std::thread([this]() {
+            if(running_) return;
+            running_= true;
+            //std::thread([this]() {
                 try
                 {
-                    if(record_to_file_)
+                   
+                    
+                    
+                    if(true)
                     {
-                        rs2::context ctx;
-                        auto devices = ctx.query_devices();
+                        auto devices = _ctx->query_devices();
                         if (devices.size() > 0)
                         {
+                             ROS_INFO(("Devices size "+std::to_string(devices.size())).c_str());
                             auto t = std::time(nullptr);
                             auto tm = *std::localtime(&t);
 
                             std::ostringstream oss;
                             oss << std::put_time(&tm, "%d-%m-%Y %H-%M-%S");
                             auto str = oss.str();
-                            ROS_INFO(("Saving to "+str+".bag").c_str());
-                            recorder_ = std::unique_ptr<rs2::recorder> (new rs2::recorder(str+".bag", devices[0]));                            
+                            std::transform(str.begin(), str.end(), str.begin(), [](char ch) {
+                                  return ch == ' ' ? '_' : ch;
+                            });
+                            str = "/scans/shape"+str+".bag";
+                            ROS_INFO(("Saving to "+str).c_str());
+                            //recorder_ = std::make_unique<rs2::recorder> (str, _ctx->query_devices()[0]); 
+                            configuration_->enable_record_to_file(str);
+                                                       
                         }
                     }
                     auto profile = pipe_->start(*configuration_);
@@ -184,27 +261,33 @@ namespace realsense_ros_camera
                                 publishFrame(frame, t);
                             }
                         }
+                        ros::spinOnce();
                     }
+                    ROS_INFO("Stoping pipeline");
                     pipe_->stop();
+      
                 }
                 catch (const std::exception &ex)
                 {
+                    running_=false;
                     ROS_ERROR_STREAM("An exception has been thrown: " << ex.what());
                     throw;
                 }
-            })
-                .detach();
+           // })
+           //     .detach();
         }
+        
+        
+        
+        
+        
 
         void Stop(Stop)
         {
             running_=false;
-            using namespace std::chrono_literals;
-            std::this_thread::sleep_for(1s);
-            if(record_to_file_)
-            {
-                recorder_.reset();
-            }
+
+           // std::this_thread::sleep_for(1s);
+            
             running_=false;
         }
         void getParameters()
@@ -275,25 +358,114 @@ namespace realsense_ros_camera
         {
             ROS_INFO("setupDevice...");
             try{
-                configuration_ = std::unique_ptr<rs2::config>(new rs2::config());
-                pipe_ = std::unique_ptr<rs2::pipeline>(new rs2::pipeline());
+                configuration_ = std::make_unique<rs2::config>();
+                pipe_ = std::make_unique<rs2::pipeline>();
                 configuration_->enable_stream(RS2_STREAM_DEPTH,  _width[DEPTH], _height[DEPTH], RS2_FORMAT_ANY, _fps[DEPTH]);
                 configuration_->enable_stream(RS2_STREAM_COLOR,  _width[COLOR], _height[COLOR], RS2_FORMAT_RGB8, _fps[COLOR]);
                 auto profile = configuration_->resolve(*pipe_);
 
                 auto sensor = profile.get_device().first<rs2::depth_sensor>();
-                //auto sensor1 = profile.get_device().first<rs2::color_sensor>();
-
-                //auto sync = profile.get_device().create_syncer(); // syncronization algorithm can be device specific
-                //dev.start(sync);
-
-                //sensor.set_option(RS2_OPTION_FRAMES_QUEUE_SIZE, 31);
 
                 sensor.set_option(RS2_OPTION_VISUAL_PRESET, RS2_RS400_VISUAL_PRESET_HIGH_ACCURACY);
-
-                sensor.set_option(RS2_OPTION_DEPTH_UNITS, depth_scale_);
                 
+				ROS_INFO(("Setting depthscale to "+std::to_string(depth_scale_)).c_str());
+                sensor.set_option(RS2_OPTION_DEPTH_UNITS, depth_scale_);
+                rs2::region_of_interest roi;
+                
+                
+                
+                _ctx.reset(new rs2::context());
+
+                auto list = _ctx->query_devices();
+                if (0 == list.size())
+                {
+                    _ctx.reset();
+                    ROS_ERROR("No RealSense devices were found! Terminate RealSense Node...");
+                    ros::shutdown();
+                    exit(1);
+                }
+
+                // Take the first device in the list.
+                // TODO: Add an ability to get the specific device to work with from outside
+                _dev = list.front();
+                _ctx->set_devices_changed_callback([this](rs2::event_information& info)
+                {
+                    if (info.was_removed(_dev))
+                    {
+                        ROS_FATAL("The device has been disconnected! Terminate RealSense Node...");
+                        ros::shutdown();
+                        exit(1);
+                    }
+                });
+
+                auto camera_name = _dev.get_info(RS2_CAMERA_INFO_NAME);
+                ROS_INFO_STREAM("Device Name: " << camera_name);
+
+                _serial_no = _dev.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
+                ROS_INFO_STREAM("Device Serial No: " << _serial_no);
+
+                auto fw_ver = _dev.get_info(RS2_CAMERA_INFO_FIRMWARE_VERSION);
+                ROS_INFO_STREAM("Device FW version: " << fw_ver);
+
+                auto pid = _dev.get_info(RS2_CAMERA_INFO_PRODUCT_ID);
+                ROS_INFO_STREAM("Device Product ID: " << pid);
+
+                ROS_INFO_STREAM("Sync Mode: " << ((_sync_frames)?"On":"Off"));
+
+                auto dev_sensors = _dev.query_sensors();
+
+                ROS_INFO_STREAM("Device Sensors: ");
+                for(auto&& elem : dev_sensors)
+                {
+                    std::string module_name = elem.get_info(RS2_CAMERA_INFO_NAME);
+                    if ("Stereo Module" == module_name || "Coded-Light Depth Sensor" == module_name)
+                    {
+                        auto sen = new rs2::sensor(elem);
+                        _sensors[DEPTH] = std::unique_ptr<rs2::sensor>(sen);
+                        _sensors[INFRA1] = std::unique_ptr<rs2::sensor>(sen);
+                        _sensors[INFRA2] = std::unique_ptr<rs2::sensor>(sen);
+                    }
+                    else if ("RGB Camera" == module_name)
+                    {
+                        _sensors[COLOR] = std::unique_ptr<rs2::sensor>(new rs2::sensor(elem));
+                    }
+                    else if ("Wide FOV Camera" == module_name)
+                    {
+                        _sensors[FISHEYE] = std::unique_ptr<rs2::sensor>(new rs2::sensor(elem));
+                    }
+                    else if ("Motion Module" == module_name)
+                    {
+                        auto hid_sensor = new rs2::sensor(elem);
+                        _sensors[GYRO] = std::unique_ptr<rs2::sensor>(hid_sensor);
+                        _sensors[ACCEL] = std::unique_ptr<rs2::sensor>(hid_sensor);
+                    }
+                    else
+                    {
+                        ROS_ERROR_STREAM("Module Name \"" << module_name << "\" isn't supported by LibRealSense! Terminate RealSense Node...");
+                        ros::shutdown();
+                        exit(1);
+                    }
+                    ROS_INFO_STREAM(std::string(elem.get_info(RS2_CAMERA_INFO_NAME)) << " was found.");
+                }
+
+                // Update "enable" map
+                std::vector<std::vector<stream_index_pair>> streams(IMAGE_STREAMS);
+                streams.insert(streams.end(), HID_STREAMS.begin(), HID_STREAMS.end());
+                for (auto& elem : streams)
+                {
+                    for (auto& stream_index : elem)
+                    {
+                        if (true == _enable[stream_index] && _sensors.find(stream_index) == _sensors.end()) // check if device supports the enabled stream
+                        {
+                            ROS_INFO_STREAM(rs2_stream_to_string(stream_index.first) << " sensor isn't supported by current device! -- Skipping...");
+                            _enable[stream_index] = false;
+                        }
+                    }
+                }
             }
+
+                
+            
             catch(const std::exception& ex)
             {
                 ROS_ERROR_STREAM("An exception has been thrown: " << ex.what());
@@ -347,73 +519,25 @@ namespace realsense_ros_camera
             }
 
         }
-        void frame_callback(rs2::frame frame) 
-        {
-            // We compute a ROS timestamp which is based on an initial ROS time at point of first frame,
-            // and the incremental timestamp from the camera.
-            // In sync mode the timestamp is based on ROS time
-            if (false == _intialize_time_base)
-            {
-                _intialize_time_base = true;
-                _ros_time_base = ros::Time::now();
-                _camera_time_base = frame.get_timestamp();
-            }
-
-            ros::Time t;
-            if (_sync_frames)
-                t = ros::Time::now();
-            else
-                t = ros::Time(_ros_time_base.toSec() + (/*ms*/ frame.get_timestamp() - /*ms*/ _camera_time_base) / /*ms to seconds*/ 1000);
-
-            auto is_color_frame_arrived = false;
-            auto is_depth_frame_arrived = false;
-            if (frame.is<rs2::frameset>())
-            {
-                ROS_DEBUG("Frameset arrived");
-                auto frameset = frame.as<rs2::frameset>();
-                for (auto it = frameset.begin(); it != frameset.end(); ++it)
-                {
-                    auto f = (*it);
-                    auto stream_type = f.get_profile().stream_type();
-                    if (RS2_STREAM_COLOR == stream_type)
-                        is_color_frame_arrived = true;
-                    else if (RS2_STREAM_DEPTH == stream_type)
-                        is_depth_frame_arrived = true;
-
-                    ROS_DEBUG("Frameset contain %s frame. frame_number: %llu ; frame_TS: %f ; ros_TS(NSec): %lu",
-                              rs2_stream_to_string(stream_type), frame.get_frame_number(), frame.get_timestamp(), t.toNSec());
-                    publishFrame(f, t);
-                }
-            }
-            else
-            {
-                auto stream_type = frame.get_profile().stream_type();
-                ROS_DEBUG("%s video frame arrived. frame_number: %llu ; frame_TS: %f ; ros_TS(NSec): %lu",
-                          rs2_stream_to_string(stream_type), frame.get_frame_number(), frame.get_timestamp(), t.toNSec());
-                publishFrame(frame, t);
-            }
-
-            if (_pointcloud && is_depth_frame_arrived && is_color_frame_arrived &&
-                (0 != _pointcloud_publisher.getNumSubscribers()))
-            {
-                ROS_DEBUG("publishPCTopic(...)");
-                publishPCTopic(t);
-            }
-        } 
+        
         void setupStreams()
         {
             ROS_INFO("setupStreams...");
             try{
                 for (auto& streams : IMAGE_STREAMS)
                 {
+					ROS_INFO("setupStreams...1");
                     for (auto& elem : streams)
                     {
                         if (true == _enable[elem])
                         {
+							ROS_INFO("setupStreams...2");
                             auto& sens = _sensors[elem];
                             auto profiles = sens->get_stream_profiles();
+                            ROS_INFO("setupStreams...3");
                             for (auto& profile : profiles)
                             {
+								ROS_INFO("setupStreams...4");
                                 auto video_profile = profile.as<rs2::video_stream_profile>();
                                 if (video_profile.format() == _format[elem] &&
                                     video_profile.width()  == _width[elem] &&
@@ -421,6 +545,7 @@ namespace realsense_ros_camera
                                     video_profile.fps()    == _fps[elem] &&
                                     video_profile.stream_index() == elem.second)
                                 {
+									ROS_INFO("setupStreams...5	");
                                     _enabled_profiles[elem].push_back(profile);
 
                                     _image[elem] = cv::Mat(_width[elem], _height[elem], _image_format[elem], cv::Scalar(0, 0, 0));
@@ -576,35 +701,11 @@ namespace realsense_ros_camera
                         }
                     });
 
-                    if (true == _enable[GYRO])
-                    {
-                        ROS_INFO_STREAM(_stream_name[GYRO] << " stream is enabled - " << "fps: " << _fps[GYRO]);
-                        auto gyroInfo = getImuInfo(GYRO);
-                        _info_publisher[GYRO].publish(gyroInfo);
-                    }
-
-                    if (true == _enable[ACCEL])
-                    {
-                        ROS_INFO_STREAM(_stream_name[ACCEL] << " stream is enabled - " << "fps: " << _fps[ACCEL]);
-                        auto accelInfo = getImuInfo(ACCEL);
-                        _info_publisher[ACCEL].publish(accelInfo);
-                    }
+                   
                 }
 
 
-                if (true == _enable[DEPTH] &&
-                    true == _enable[FISHEYE])
-                {
-                    auto ex = getFisheye2DepthExtrinsicsMsg();
-                    _fe_to_depth_publisher.publish(ex);
-                }
-
-                if (true == _enable[FISHEYE] &&
-                    (_enable[GYRO] || _enable[ACCEL]))
-                {
-                    auto ex = getFisheye2ImuExtrinsicsMsg();
-                    _fe_to_imu_publisher.publish(ex);
-                }
+               
             }
             catch(const std::exception& ex)
             {
@@ -1089,7 +1190,7 @@ namespace realsense_ros_camera
 
         std::map<stream_index_pair, std::unique_ptr<rs2::sensor>> _sensors;
 
-        std::string _serial_no;
+        std::string _serial_no;std::map<stream_index_pair, std::vector<rs2::stream_profile>> _enabled_profiles;
         float _depth_scale_meters;
 
         std::map<stream_index_pair, rs2_intrinsics> _stream_intrinsics;
@@ -1117,7 +1218,6 @@ namespace realsense_ros_camera
         ros::Publisher _fe_to_depth_publisher, _fe_to_imu_publisher;
         bool _intialize_time_base;
         double _camera_time_base;
-        std::map<stream_index_pair, std::vector<rs2::stream_profile>> _enabled_profiles;
 
         ros::Publisher _pointcloud_publisher;
         ros::Time _ros_time_base;
