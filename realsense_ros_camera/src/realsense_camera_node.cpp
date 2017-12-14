@@ -161,7 +161,7 @@ namespace realsense_ros_camera
 				s.set_option( boost::asio::socket_base::broadcast(true) );
 
 				udp::resolver resolver(io_service);
-				udp::endpoint endpoint = *resolver.resolve({ udp::v4(), "192.168.29.255", "8888" });
+				udp::endpoint endpoint = *resolver.resolve({ udp::v4(), "192.168.1.255", "8888" });
 						
 				std::string line;
 				while (std::getline(f, line))
@@ -170,13 +170,15 @@ namespace realsense_ros_camera
 					std::istringstream iss(line);
 					std::string command;
 					iss >> command;
-					if("Start sensor"==command)
+					if(command == "Start")
 					{
+						ROS_INFO_STREAM("Starting sensor");
 						std::thread([this]{Start(realsense_ros_camera::Start());}).detach();
 						continue;
 					}
-					if("Stop sensor"==command)
+					if(command == "Stop")
 					{
+						ROS_INFO_STREAM("Stoping sensor");
 						Stop(realsense_ros_camera::Stop());
 						continue;
 					}
@@ -225,19 +227,19 @@ namespace realsense_ros_camera
                         if (devices.size() > 0)
                         {
                              ROS_INFO(("Devices size "+std::to_string(devices.size())).c_str());
-                            auto t = std::time(nullptr);
-                            auto tm = *std::localtime(&t);
+                            //auto t = std::time(nullptr);
+                            //auto tm = *std::localtime(&t);
 
-                            std::ostringstream oss;
-                            oss << std::put_time(&tm, "%d-%m-%Y %H-%M-%S");
-                            auto str = oss.str();
-                            std::transform(str.begin(), str.end(), str.begin(), [](char ch) {
-                                  return ch == ' ' ? '_' : ch;
-                            });
-                            str = "/scans/shape"+str+".bag";
-                            ROS_INFO(("Saving to "+str).c_str());
-                            //recorder_ = std::make_unique<rs2::recorder> (str, _ctx->query_devices()[0]); 
-                            configuration_->enable_record_to_file(str);
+                            //std::ostringstream oss;
+                            //oss << std::put_time(&tm, "%d-%m-%Y %H-%M-%S");
+                            //auto str = oss.str();
+                            //std::transform(str.begin(), str.end(), str.begin(), [](char ch) {
+                                  //return ch == ' ' ? '_' : ch;
+                            //});
+                            //str = "/scans/shape"+str+".bag";
+                            //ROS_INFO(("Saving to "+str).c_str());
+                            ////recorder_ = std::make_unique<rs2::recorder> (str, _ctx->query_devices()[0]); 
+                            //configuration_->enable_record_to_file(str);
                                                        
                         }
                     }
@@ -248,7 +250,7 @@ namespace realsense_ros_camera
                         //scan_traits<rs2::frameset>::convert_to(points);
                         if (frame_set.is<rs2::frameset>())
                         {
-                            ROS_DEBUG("Frameset arrived");
+                            //~ ROS_DEBUG("Frameset arrived");
                             auto frameset = frame_set.as<rs2::frameset>();
                             for (auto it = frameset.begin(); it != frameset.end(); ++it)
                             {
@@ -256,8 +258,8 @@ namespace realsense_ros_camera
                                 auto stream_type = frame.get_profile().stream_type();
                                 ros::Time t;
                                 t = ros::Time(_ros_time_base.toSec() + (/*ms*/ frame.get_timestamp() - /*ms*/ _camera_time_base) / /*ms to seconds*/ 1000);
-                                ROS_DEBUG("Frameset contain %s frame. frame_number: %llu ; frame_TS: %f ; ros_TS(NSec): %lu",
-                                          rs2_stream_to_string(stream_type), frame.get_frame_number(), frame.get_timestamp(), t.toNSec());
+                                //ROS_DEBUG("Frameset contain %s frame. frame_number: %llu ; frame_TS: %f ; ros_TS(NSec): %lu",
+                                          //rs2_stream_to_string(stream_type), frame.get_frame_number(), frame.get_timestamp(), t.toNSec());
                                 publishFrame(frame, t);
                             }
                         }
@@ -537,7 +539,6 @@ namespace realsense_ros_camera
                             ROS_INFO("setupStreams...3");
                             for (auto& profile : profiles)
                             {
-								ROS_INFO("setupStreams...4");
                                 auto video_profile = profile.as<rs2::video_stream_profile>();
                                 if (video_profile.format() == _format[elem] &&
                                     video_profile.width()  == _width[elem] &&
