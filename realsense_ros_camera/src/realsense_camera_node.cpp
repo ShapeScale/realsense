@@ -117,10 +117,7 @@ namespace realsense_ros_camera
     private:
         virtual void onInit()
         {
-            getParameters();
-            setupDevice();
-            setupPublishers();
-            setupStreams();
+           
             //publishStaticTransforms();
             ROS_INFO_STREAM("RealSense Node Is Up!");
             ros::spin();
@@ -186,14 +183,16 @@ namespace realsense_ros_camera
         {
             if(running_) return;
             running_= true;
-            //std::thread([this]() {
                 try
                 {
-                   
+                    getParameters();
+                    setupDevice();
+                    setupPublishers();
+                    setupStreams();
                     auto profile = pipe_->start(*configuration_);
                     while (running_)
                     {
-                        rs2::frameset frame_set = pipe_->wait_for_frames();
+                        rs2::frameset frame_set = pipe_->wait_for_frames(500);
                         //scan_traits<rs2::frameset>::convert_to(points);
                         if (frame_set.is<rs2::frameset>())
                         {
@@ -214,7 +213,6 @@ namespace realsense_ros_camera
                     }
                     ROS_INFO("Stoping pipeline");
                     pipe_->stop();
-      
                 }
                 catch (const std::exception &ex)
                 {
@@ -222,20 +220,12 @@ namespace realsense_ros_camera
                     ROS_ERROR_STREAM("An exception has been thrown: " << ex.what());
                     throw;
                 }
-           // })
-           //     .detach();
         }
         
-        
-        
-        
-        
-
         void Stop(Stop)
         {
             running_=false;
-
-           // std::this_thread::sleep_for(1s);
+            ros::spin();
         }
         void getParameters()
         {
@@ -400,8 +390,8 @@ namespace realsense_ros_camera
         void setupSubscribers()
         {
             ROS_INFO("setupSubscriber...");
-            start_subscriber_ = _node_handle.subscribe("Start", 10, &RealSenseCameraNodelet::Start, this);
-            stop_subscriber_ = _node_handle.subscribe("Stop", 10, &RealSenseCameraNodelet::Stop, this);
+            start_subscriber_ = _node_handle.subscribe("Start", 1, &RealSenseCameraNodelet::Start, this);
+            stop_subscriber_ = _node_handle.subscribe("Stop", 1, &RealSenseCameraNodelet::Stop, this);
 
         }
         void setupPublishers()
