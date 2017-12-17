@@ -35,12 +35,18 @@ add_message_files(
     Stop.msg
     )
 
-generate_messages(
-    DEPENDENCIES
-    sensor_msgs
-    std_msgs
-    )
 
+add_service_files(
+        FILES
+        CameraControl.srv
+        )
+      
+generate_messages(
+        DEPENDENCIES
+            sensor_msgs
+            std_msgs
+        )   
+      
 include_directories(
     include
     ${catkin_INCLUDE_DIRS}
