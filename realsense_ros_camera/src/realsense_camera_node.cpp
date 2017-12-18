@@ -117,82 +117,34 @@ namespace realsense_ros_camera
     private:
         virtual void onInit()
         {
-           
+            setupSubscribers();
             //publishStaticTransforms();
             ROS_INFO_STREAM("RealSense Node Is Up!");
             ros::spin();
             ROS_INFO_STREAM("RealSense onInit about to exit!");
            
         }
-
-        void frame_callback(rs2::frame frame)
-        {
-            // We compute a ROS timestamp which is based on an initial ROS time at point of first frame,
-            // and the incremental timestamp from the camera.
-            // In sync mode the timestamp is based on ROS time
-            if (false == _intialize_time_base)
-            {
-                _intialize_time_base = true;
-                _ros_time_base = ros::Time::now();
-                _camera_time_base = frame.get_timestamp();
-            }
-
-            ros::Time t;
-            if (_sync_frames)
-                t = ros::Time::now();
-            else
-                t = ros::Time(_ros_time_base.toSec() + (/*ms*/ frame.get_timestamp() - /*ms*/ _camera_time_base) / /*ms to seconds*/ 1000);
-
-            auto is_color_frame_arrived = false;
-            auto is_depth_frame_arrived = false;
-            if (frame.is<rs2::frameset>())
-            {
-                ROS_DEBUG("Frameset arrived");
-                auto frameset = frame.as<rs2::frameset>();
-                for (auto it = frameset.begin(); it != frameset.end(); ++it)
-                {
-                    auto f = (*it);
-                    auto stream_type = f.get_profile().stream_type();
-                    if (RS2_STREAM_COLOR == stream_type)
-                        is_color_frame_arrived = true;
-                    else if (RS2_STREAM_DEPTH == stream_type)
-                        is_depth_frame_arrived = true;
-
-                    ROS_DEBUG("Frameset contain %s frame. frame_number: %llu ; frame_TS: %f ; ros_TS(NSec): %lu",
-                              rs2_stream_to_string(stream_type), frame.get_frame_number(), frame.get_timestamp(), t.toNSec());
-                    publishFrame(f, t);
-                }
-            }
-            else
-            {
-                auto stream_type = frame.get_profile().stream_type();
-                ROS_DEBUG("%s video frame arrived. frame_number: %llu ; frame_TS: %f ; ros_TS(NSec): %lu",
-                          rs2_stream_to_string(stream_type), frame.get_frame_number(), frame.get_timestamp(), t.toNSec());
-                publishFrame(frame, t);
-            }
-
-            if (_pointcloud && is_depth_frame_arrived && is_color_frame_arrived &&
-                (0 != _pointcloud_publisher.getNumSubscribers()))
-            {
-                ROS_DEBUG("publishPCTopic(...)");
-                publishPCTopic(t);
-            }
-        }
-
+        
+        
+        
+        
         void Start(Start)
         {
+             ROS_INFO_STREAM("Start message recived!");
             if(running_) return;
             running_= true;
+            //std::thread([this]() {
                 try
                 {
                     getParameters();
                     setupDevice();
                     setupPublishers();
                     setupStreams();
+
                     auto profile = pipe_->start(*configuration_);
                     while (running_)
                     {
-                        rs2::frameset frame_set = pipe_->wait_for_frames(500);
+                        rs2::frameset frame_set = pipe_->wait_for_frames();
                         //scan_traits<rs2::frameset>::convert_to(points);
                         if (frame_set.is<rs2::frameset>())
                         {
@@ -213,6 +165,7 @@ namespace realsense_ros_camera
                     }
                     ROS_INFO("Stoping pipeline");
                     pipe_->stop();
+      
                 }
                 catch (const std::exception &ex)
                 {
@@ -220,12 +173,22 @@ namespace realsense_ros_camera
                     ROS_ERROR_STREAM("An exception has been thrown: " << ex.what());
                     throw;
                 }
+           // })
+           //     .detach();
         }
         
+        
+        
+        
+        
+
         void Stop(Stop)
         {
+            ROS_INFO_STREAM("Stop message recived!");
+
             running_=false;
-            ros::spin();
+
+           // std::this_thread::sleep_for(1s);
         }
         void getParameters()
         {

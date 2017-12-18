@@ -88,11 +88,11 @@
   </node>
 
   
-  <include file="$(find rtimulib_ros)/launch/rtimulib_ros.launch"/> 
+  <!-- < file="$(find rtimulib_ros)/launch/rtimulib_ros.launch"/> 
 
 	<node pkg="rosbag" type="record" name="rosbag_record_cam"
        args="record -o /scans/ /rtimulib_node/imu /camera/depth/image_raw  "/>
-
+ -->
 
 
 </launch>
