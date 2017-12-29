@@ -119,6 +119,10 @@ namespace realsense_ros_camera
         {
             setupSubscribers();
             //publishStaticTransforms();
+            getParameters();
+            setupDevice();
+            setupPublishers();
+            setupStreams();
             ROS_INFO_STREAM("RealSense Node Is Up!");
             ros::spin();
             ROS_INFO_STREAM("RealSense onInit about to exit!");
@@ -136,10 +140,7 @@ namespace realsense_ros_camera
             //std::thread([this]() {
                 try
                 {
-                    getParameters();
-                    setupDevice();
-                    setupPublishers();
-                    setupStreams();
+                 
 
                     auto profile = pipe_->start(*configuration_);
                     while (running_)
@@ -222,6 +223,7 @@ namespace realsense_ros_camera
             _pnh.param("color_height", _height[COLOR], COLOR_HEIGHT);
             _pnh.param("color_fps", _fps[COLOR], COLOR_FPS);
             _pnh.param("enable_color", _enable[COLOR], ENABLE_COLOR);
+            _pnh.param("depth_scale", depth_scale_, DEFAULT_DEPTHSCALE);
 
             _pnh.param("base_frame_id", _base_frame_id, DEFAULT_BASE_FRAME_ID);
             _pnh.param("depth_frame_id", _frame_id[DEPTH], DEFAULT_DEPTH_FRAME_ID);
