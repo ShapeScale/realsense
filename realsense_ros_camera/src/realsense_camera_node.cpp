@@ -251,9 +251,9 @@ namespace realsense_ros_camera
 
                 sensor.set_option(RS2_OPTION_VISUAL_PRESET, RS2_RS400_VISUAL_PRESET_HIGH_ACCURACY);
                 
-				ROS_INFO(("Setting depthscale to "+std::to_string(depth_scale_)).c_str());
-                sensor.set_option(RS2_OPTION_DEPTH_UNITS, depth_scale_);
-                rs2::region_of_interest roi;
+				//ROS_INFO(("Setting depthscale to "+std::to_string(depth_scale_)).c_str());
+                //sensor.set_option(RS2_OPTION_DEPTH_UNITS, depth_scale_);
+                //rs2::region_of_interest roi;
                 
                 
                 
