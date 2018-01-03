@@ -210,7 +210,7 @@ namespace realsense_ros_camera
                 }
         }
 
-        void Start(Start)
+        void Start(const Start::ConstPtr &)
         {
              ROS_INFO_STREAM("Start message recived!");
             if(running_) return;
@@ -261,7 +261,7 @@ namespace realsense_ros_camera
         
         
 
-        void Stop(Stop)
+        void Stop(const Start::ConstPtr &)
         {
             ROS_INFO_STREAM("Stop message recived!");
 
