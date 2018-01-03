@@ -43,6 +43,9 @@
   <arg name="record_to_file"      default="true" />
   <arg name="depth_scale"         default="0.0001" />
 
+  <param name="calibration_file_path" value="/scans"/>
+  <param name="calibration_file_name" value="RTIMULib.ini" />
+
   <node pkg="nodelet" type="nodelet" name="$(arg manager)" args="manager" output="screen"/> 
   <node pkg="nodelet" type="nodelet" name="realsense_ros_$(arg camera)" args="load realsense_ros_camera/RealSenseCameraNodelet $(arg manager)" output="screen">
 
@@ -87,10 +90,9 @@
     <param name="gyro_optical_frame_id"    type="str"  value="$(arg camera)_gyro_optical_frame" />
   </node>
 
-	<include file="$(find rtimulib_ros)/launch/rtimulib_ros.launch"/> 
+	<include file="$(find shapescale_motion)/launch/shapescale_motion.launch"/> 
 	<node pkg="rosbag" type="record" name="rosbag_record_cam"
-       args="record -o /scans/ /rtimulib_node/imu /camera/depth/image_raw /camera/color/camera_info /camera/depth/camera_info /camera/color/image_raw/compressed"/>
+       args="record -o /scans/ /camera/imu /camera/depth/image_raw /camera/color/camera_info /camera/depth/camera_info /camera/color/image_raw/compressed /camera/Start /camera/Stop"/>
  
-
 
 </launch>
