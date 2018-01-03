@@ -355,8 +355,8 @@ namespace realsense_ros_camera
         void setupSubscribers()
         {
             ROS_INFO("setupSubscriber...");
-            start_subscriber_ = _node_handle.subscribe("Start", 1, &RealSenseCameraNodelet::Start, this);
-            stop_subscriber_ = _node_handle.subscribe("Stop", 1, &RealSenseCameraNodelet::Stop, this);
+            start_subscriber_ = _node_handle.subscribe("camera/Start", 1, &RealSenseCameraNodelet::Start, this);
+            stop_subscriber_ = _node_handle.subscribe("camera/Stop", 1, &RealSenseCameraNodelet::Stop, this);
 
         }
         void setupPublishers()

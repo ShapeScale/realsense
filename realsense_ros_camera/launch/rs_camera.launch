@@ -13,8 +13,8 @@
   <arg name="fisheye_height"      default="480" />
   <arg name="enable_fisheye"      default="false" />
 
-  <arg name="depth_width"         default="1280" />
-  <arg name="depth_height"        default="720" />
+  <arg name="depth_width"         default="640" />
+  <arg name="depth_height"        default="480" />
   <arg name="enable_depth"        default="true" />
 
   <arg name="infra1_width"        default="640" />
@@ -30,10 +30,10 @@
   <arg name="enable_color"        default="true" />
 
   <arg name="fisheye_fps"         default="30" />
-  <arg name="depth_fps"           default="15" />
+  <arg name="depth_fps"           default="30" />
   <arg name="infra1_fps"          default="30" />
   <arg name="infra2_fps"          default="30" />
-  <arg name="color_fps"           default="15" />
+  <arg name="color_fps"           default="30" />
   <arg name="gyro_fps"            default="1000" />
   <arg name="accel_fps"           default="1000" />
   <arg name="enable_imu"          default="false" />
@@ -87,12 +87,10 @@
     <param name="gyro_optical_frame_id"    type="str"  value="$(arg camera)_gyro_optical_frame" />
   </node>
 
-  
-  <!-- < file="$(find rtimulib_ros)/launch/rtimulib_ros.launch"/> 
-
+	<include file="$(find rtimulib_ros)/launch/rtimulib_ros.launch"/> 
 	<node pkg="rosbag" type="record" name="rosbag_record_cam"
-       args="record -o /scans/ /rtimulib_node/imu /camera/depth/image_raw  "/>
- -->
+       args="record -o /scans/ /rtimulib_node/imu /camera/depth/image_raw /camera/color/camera_info /camera/depth/camera_info /camera/color/image_raw/compressed"/>
+ 
 
 
 </launch>
