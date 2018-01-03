@@ -24,6 +24,9 @@
 #include <csignal>
 #include <eigen3/Eigen/Geometry>
 
+#include <RTIMULib.h>
+#include <sensor_msgs/Imu.h>
+
 #include <boost/asio.hpp>
 
 #include <fstream>
@@ -36,6 +39,7 @@
 
 #define REALSENSE_ROS_EMBEDDED_VERSION_STR (VAR_ARG_STRING(VERSION: REALSENSE_ROS_MAJOR_VERSION.REALSENSE_ROS_MINOR_VERSION.REALSENSE_ROS_PATCH_VERSION))
 constexpr auto realsense_ros_camera_version = REALSENSE_ROS_EMBEDDED_VERSION_STR;
+static const double G_TO_MPSS = 9.80665;
 
 namespace realsense_ros_camera
 {
@@ -128,10 +132,84 @@ namespace realsense_ros_camera
             ROS_INFO_STREAM("RealSense onInit about to exit!");
            
         }
-        
-        
-        
-        
+
+        void IMUInit()
+        {
+            std::string calibration_file_path;
+            if (!_pnh.getParam("calibration_file_path", calibration_file_path))
+            {
+                ROS_ERROR("The calibration_file_path parameter must be set to use a "
+                                      "calibration file.");
+                ROS_BREAK();
+            }
+
+            std::string calibration_file_name = "RTIMULib";
+            if (!_pnh.getParam("calibration_file_name", calibration_file_name))
+            {
+                ROS_WARN_STREAM("No calibration_file_name provided - default: "
+                                << calibration_file_name);
+            }
+
+            
+
+            ros::Publisher imu_pub = _pnh.advertise<sensor_msgs::Imu>("camera/imu", 1);
+
+            // Load the RTIMULib.ini config file
+            RTIMUSettings *settings = new RTIMUSettings(calibration_file_path.c_str(),
+                                                        calibration_file_name.c_str());
+
+            RTIMU *imu = RTIMU::createIMU(settings);
+
+            if ((imu == NULL) || (imu->IMUType() == RTIMU_TYPE_NULL))
+            {
+                ROS_ERROR("No Imu found");
+                ROS_BREAK();
+            }
+
+            // Initialise the imu object
+            imu->IMUInit();
+
+            // Set the Fusion coefficient
+            imu->setSlerpPower(0.02);
+            // Enable the sensors
+            imu->setGyroEnable(true);
+            imu->setAccelEnable(true);
+            imu->setCompassEnable(true);
+            	static int i = 0;
+                sensor_msgs::Imu imu_msg;
+                while (ros::ok())
+                {
+                    if (imu->IMURead())
+                    {
+
+                        RTIMU_DATA imu_data = imu->getIMUData();
+
+                        imu_msg.header.stamp = ros::Time::now();
+                        imu_msg.header.frame_id = 1;
+
+                        imu_msg.orientation.x = imu_data.fusionQPose.x();
+                        imu_msg.orientation.y = imu_data.fusionQPose.y();
+                        imu_msg.orientation.z = imu_data.fusionQPose.z();
+                        imu_msg.orientation.w = imu_data.fusionQPose.scalar();
+
+                        imu_msg.angular_velocity.x = imu_data.gyro.x();
+                        imu_msg.angular_velocity.y = imu_data.gyro.y();
+                        imu_msg.angular_velocity.z = imu_data.gyro.z();
+
+                        imu_msg.linear_acceleration.x = imu_data.accel.x() * G_TO_MPSS;
+                        imu_msg.linear_acceleration.y = imu_data.accel.y() * G_TO_MPSS;
+                        imu_msg.linear_acceleration.z = imu_data.accel.z() * G_TO_MPSS;
+                        if(running_)
+                        {
+                             imu_pub.publish(imu_msg);
+                        }
+
+
+                    }
+                    ros::Duration(imu->IMUGetPollInterval() / 1000.0).sleep();
+                }
+        }
+
         void Start(Start)
         {
              ROS_INFO_STREAM("Start message recived!");
@@ -963,6 +1041,9 @@ namespace realsense_ros_camera
         bool record_to_file_;
         ros::Subscriber start_subscriber_;
         ros::Subscriber stop_subscriber_;
+        sensor_msgs::Imu current_imu_msg_;
+        std::mutex imu_mutex;
+
     };//end class
 
     PLUGINLIB_EXPORT_CLASS(realsense_ros_camera::RealSenseCameraNodelet, nodelet::Nodelet)
