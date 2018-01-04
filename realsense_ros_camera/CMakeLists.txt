@@ -73,6 +73,7 @@ target_link_libraries(${PROJECT_NAME}
     realsense2
     ${catkin_LIBRARIES}
     ${CMAKE_THREAD_LIBS_INIT}
+    RTIMULib
     )
 
 # Install nodelet library
@@ -97,7 +98,7 @@ install(DIRECTORY rviz/
     DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/rviz
     )
 
-# Install xml files
+#Install xml files
 install(FILES nodelet_plugins.xml
     DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
     )

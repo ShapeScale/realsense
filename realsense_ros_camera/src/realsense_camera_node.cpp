@@ -18,14 +18,13 @@
 #include <tf/transform_broadcaster.h>
 #include <tf2_ros/static_transform_broadcaster.h>
 #include <sensor_msgs/Imu.h>
-#include <realsense_ros_camera/Start.h>
-#include <realsense_ros_camera/Stop.h>
 #include <realsense_ros_camera/IMUInfo.h>
 #include <csignal>
 #include <eigen3/Eigen/Geometry>
 
 #include <RTIMULib.h>
 #include <sensor_msgs/Imu.h>
+#include <std_msgs/String.h>
 
 #include <boost/asio.hpp>
 
@@ -121,14 +120,18 @@ namespace realsense_ros_camera
     private:
         virtual void onInit()
         {
-            setupSubscribers();
+			
             //publishStaticTransforms();
             getParameters();
+            IMUInit();
+
             setupDevice();
             setupPublishers();
+            setupSubscribers();
+
             setupStreams();
             ROS_INFO_STREAM("RealSense Node Is Up!");
-            ros::spin();
+            //ros::spin();
             ROS_INFO_STREAM("RealSense onInit about to exit!");
            
         }
@@ -136,7 +139,7 @@ namespace realsense_ros_camera
         void IMUInit()
         {
             std::string calibration_file_path;
-            if (!_pnh.getParam("calibration_file_path", calibration_file_path))
+            if (!_node_handle.getParam("calibration_file_path", calibration_file_path))
             {
                 ROS_ERROR("The calibration_file_path parameter must be set to use a "
                                       "calibration file.");
@@ -144,7 +147,7 @@ namespace realsense_ros_camera
             }
 
             std::string calibration_file_name = "RTIMULib";
-            if (!_pnh.getParam("calibration_file_name", calibration_file_name))
+            if (!_node_handle.getParam("calibration_file_name", calibration_file_name))
             {
                 ROS_WARN_STREAM("No calibration_file_name provided - default: "
                                 << calibration_file_name);
@@ -152,13 +155,13 @@ namespace realsense_ros_camera
 
             
 
-            ros::Publisher imu_pub = _pnh.advertise<sensor_msgs::Imu>("camera/imu", 1);
+            imu_pub_ = _node_handle.advertise<sensor_msgs::Imu>("/camera/imu", 1);
 
             // Load the RTIMULib.ini config file
             RTIMUSettings *settings = new RTIMUSettings(calibration_file_path.c_str(),
                                                         calibration_file_name.c_str());
 
-            RTIMU *imu = RTIMU::createIMU(settings);
+            imu = RTIMU::createIMU(settings);
 
             if ((imu == NULL) || (imu->IMUType() == RTIMU_TYPE_NULL))
             {
@@ -175,6 +178,8 @@ namespace realsense_ros_camera
             imu->setGyroEnable(true);
             imu->setAccelEnable(true);
             imu->setCompassEnable(true);
+            std::thread([this]
+            {
             	static int i = 0;
                 sensor_msgs::Imu imu_msg;
                 while (ros::ok())
@@ -201,21 +206,30 @@ namespace realsense_ros_camera
                         imu_msg.linear_acceleration.z = imu_data.accel.z() * G_TO_MPSS;
                         if(running_)
                         {
-                             imu_pub.publish(imu_msg);
+                             imu_pub_.publish(imu_msg);
                         }
 
 
                     }
                     ros::Duration(imu->IMUGetPollInterval() / 1000.0).sleep();
                 }
-        }
-
-        void Start(const Start::ConstPtr &)
+			}).detach();
+	}
+		void ProccessCommad(const std_msgs::StringConstPtr &msg)
+		{
+			  ROS_INFO_STREAM("ProccessCommad recived!");
+			
+			if(msg->data=="Start")
+				Start();
+			if(msg->data=="Stop")
+				Stop();
+		}
+        void Start()
         {
              ROS_INFO_STREAM("Start message recived!");
-            if(running_) return;
+			if(running_) return;
             running_= true;
-            //std::thread([this]() {
+            std::thread([this]() {
                 try
                 {
                  
@@ -240,7 +254,7 @@ namespace realsense_ros_camera
                                 publishFrame(frame, t);
                             }
                         }
-                        ros::spinOnce();
+                       // ros::spinOnce();
                     }
                     ROS_INFO("Stoping pipeline");
                     pipe_->stop();
@@ -252,8 +266,7 @@ namespace realsense_ros_camera
                     ROS_ERROR_STREAM("An exception has been thrown: " << ex.what());
                     throw;
                 }
-           // })
-           //     .detach();
+            }).detach();
         }
         
         
@@ -261,7 +274,7 @@ namespace realsense_ros_camera
         
         
 
-        void Stop(const Start::ConstPtr &)
+        void Stop()
         {
             ROS_INFO_STREAM("Stop message recived!");
 
@@ -274,7 +287,7 @@ namespace realsense_ros_camera
             ROS_INFO("getParameters...");
 
             _pnh = getPrivateNodeHandle();
-
+			_node_handle = getPrivateNodeHandle();
             _pnh.param("enable_pointcloud", _pointcloud, POINTCLOUD);
             _pnh.param("enable_sync", _sync_frames, SYNC_FRAMES);
             if (_pointcloud)
@@ -433,8 +446,7 @@ namespace realsense_ros_camera
         void setupSubscribers()
         {
             ROS_INFO("setupSubscriber...");
-            start_subscriber_ = _node_handle.subscribe("camera/Start", 1, &RealSenseCameraNodelet::Start, this);
-            stop_subscriber_ = _node_handle.subscribe("camera/Stop", 1, &RealSenseCameraNodelet::Stop, this);
+            command_subscriber_ = _node_handle.subscribe("/camera/Command", 1, &RealSenseCameraNodelet::ProccessCommad, this);
 
         }
         void setupPublishers()
@@ -444,8 +456,9 @@ namespace realsense_ros_camera
 
             if (true == _enable[DEPTH])
             {
-                _image_publishers[DEPTH] = image_transport.advertise("camera/depth/image_raw", 1);
-                _info_publisher[DEPTH] = _node_handle.advertise<sensor_msgs::CameraInfo>("camera/depth/camera_info", 1);
+                _image_publishers[DEPTH] = image_transport.advertise("/camera/depth/image_raw", 1);
+                _info_publisher[DEPTH] = _node_handle.advertise<sensor_msgs::CameraInfo>("/camera/depth/camera_info", 1);
+				
 
                 if (_pointcloud)
                     _pointcloud_publisher = _node_handle.advertise<sensor_msgs::PointCloud2>("/camera/points", 1);
@@ -454,8 +467,8 @@ namespace realsense_ros_camera
        
             if (true == _enable[COLOR])
             {
-                _image_publishers[COLOR] = image_transport.advertise("camera/color/image_raw", 1);
-                _info_publisher[COLOR] = _node_handle.advertise<sensor_msgs::CameraInfo>("camera/color/camera_info", 1);
+                _image_publishers[COLOR] = image_transport.advertise("/camera/color/image_raw", 1);
+                _info_publisher[COLOR] = _node_handle.advertise<sensor_msgs::CameraInfo>("/camera/color/camera_info", 1);
             }
 
 
@@ -1039,10 +1052,11 @@ namespace realsense_ros_camera
         float depth_scale_;
         std::unique_ptr<rs2::recorder> recorder_;
         bool record_to_file_;
-        ros::Subscriber start_subscriber_;
-        ros::Subscriber stop_subscriber_;
+        ros::Subscriber command_subscriber_;
         sensor_msgs::Imu current_imu_msg_;
         std::mutex imu_mutex;
+        RTIMU *imu;
+        ros::Publisher imu_pub_;
 
     };//end class
 
