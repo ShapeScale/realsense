@@ -30,10 +30,10 @@
   <arg name="enable_color"        default="true" />
 
   <arg name="fisheye_fps"         default="30" />
-  <arg name="depth_fps"           default="30" />
-  <arg name="infra1_fps"          default="30" />
-  <arg name="infra2_fps"          default="30" />
-  <arg name="color_fps"           default="30" />
+  <arg name="depth_fps"           default="15" />
+  <arg name="infra1_fps"          default="15" />
+  <arg name="infra2_fps"          default="15" />
+  <arg name="color_fps"           default="15" />
   <arg name="gyro_fps"            default="1000" />
   <arg name="accel_fps"           default="1000" />
   <arg name="enable_imu"          default="false" />
@@ -42,9 +42,8 @@
   <arg name="enable_sync"         default="true" />
   <arg name="record_to_file"      default="true" />
   <arg name="depth_scale"         default="0.0001" />
-
-
-
+  
+ 
   <node pkg="nodelet" type="nodelet" name="$(arg manager)" args="manager" output="screen"/> 
   <node pkg="nodelet" type="nodelet" name="realsense_ros_$(arg camera)" args="load realsense_ros_camera/RealSenseCameraNodelet $(arg manager)" output="screen">
 
@@ -91,11 +90,6 @@
     <param name="gyro_optical_frame_id"    type="str"  value="$(arg camera)_gyro_optical_frame" />
   </node>
 
-  <node pkg="nodelet" type="nodelet" name="shapescale_motion" args="load shapescale/ShapeScaleMotionNodelet $(arg manager)" output="screen">
-
-  </node>
-	<node pkg="rosbag" type="record" name="rosbag_record_cam"
-       args="record -o /scans/ /camera/imu /camera/depth/image_raw /camera/color/camera_info /camera/depth/camera_info /camera/color/image_raw/compressed /camera/Commnad"/>
-
+	
  
 </launch>

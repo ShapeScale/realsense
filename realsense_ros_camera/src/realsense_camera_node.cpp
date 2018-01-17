@@ -27,6 +27,7 @@
 #include <std_msgs/String.h>
 
 #include <boost/asio.hpp>
+#include "boost/date_time/posix_time/posix_time.hpp"
 
 #include <fstream>
 #include <chrono>
@@ -115,7 +116,9 @@ namespace realsense_ros_camera
         }
 
         virtual ~RealSenseCameraNodelet()
-        {}
+        {
+			 ROS_INFO("estructor of RealSenseCameraNodelet called");
+		}
 
     private:
         virtual void onInit()
@@ -155,7 +158,7 @@ namespace realsense_ros_camera
 
             
 
-            imu_pub_ = _node_handle.advertise<sensor_msgs::Imu>("/camera/imu", 1);
+            imu_pub_ = _node_handle.advertise<sensor_msgs::Imu>("/camera/imu", 100);
 
             // Load the RTIMULib.ini config file
             RTIMUSettings *settings = new RTIMUSettings(calibration_file_path.c_str(),
@@ -217,16 +220,20 @@ namespace realsense_ros_camera
 	}
 		void ProccessCommad(const std_msgs::StringConstPtr &msg)
 		{
-			  ROS_INFO_STREAM("ProccessCommad recived!");
+			ROS_INFO("ProccessCommad recived!");
 			
 			if(msg->data=="Start")
+			{
 				Start();
+			}
 			if(msg->data=="Stop")
+			{
 				Stop();
+			}
 		}
         void Start()
         {
-             ROS_INFO_STREAM("Start message recived!");
+            ROS_INFO_STREAM("Start message recived!");
 			if(running_) return;
             running_= true;
             std::thread([this]() {
@@ -258,6 +265,17 @@ namespace realsense_ros_camera
                     }
                     ROS_INFO("Stoping pipeline");
                     pipe_->stop();
+                    try
+                    {
+						pipe_->start();
+						rs2::frameset frame_set = pipe_->wait_for_frames(100);
+						pipe_->stop();
+						
+					}
+					catch(...)
+					{
+						pipe_->stop();
+					}
       
                 }
                 catch (const std::exception &ex)
@@ -446,7 +464,7 @@ namespace realsense_ros_camera
         void setupSubscribers()
         {
             ROS_INFO("setupSubscriber...");
-            command_subscriber_ = _node_handle.subscribe("/camera/Command", 1, &RealSenseCameraNodelet::ProccessCommad, this);
+            command_subscriber_ = _node_handle.subscribe("/camera/command", 1, &RealSenseCameraNodelet::ProccessCommad, this);
 
         }
         void setupPublishers()
@@ -456,7 +474,7 @@ namespace realsense_ros_camera
 
             if (true == _enable[DEPTH])
             {
-                _image_publishers[DEPTH] = image_transport.advertise("/camera/depth/image_raw", 1);
+                _image_publishers[DEPTH] = image_transport.advertise("/camera/depth/image_raw", 300);
                 _info_publisher[DEPTH] = _node_handle.advertise<sensor_msgs::CameraInfo>("/camera/depth/camera_info", 1);
 				
 
@@ -467,7 +485,7 @@ namespace realsense_ros_camera
        
             if (true == _enable[COLOR])
             {
-                _image_publishers[COLOR] = image_transport.advertise("/camera/color/image_raw", 1);
+                _image_publishers[COLOR] = image_transport.advertise("/camera/color/image_raw", 300);
                 _info_publisher[COLOR] = _node_handle.advertise<sensor_msgs::CameraInfo>("/camera/color/camera_info", 1);
             }
 
